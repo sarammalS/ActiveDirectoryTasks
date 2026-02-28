@@ -30,14 +30,10 @@
 <body>
     <h2>Welcome, <c:out value="${user}"/>!</h2>
 
-    <form action="CreateUser.jsp" method="get" style="display:inline;">
+    <form action="CreateUserServlet" method="get" style="display:inline;">
         <button type="submit">Create User</button>
     </form>
 
-    <form action="EditUserServlet" method="get" style="display:inline;">
-        <input type="hidden" name="username" value="<%= java.net.URLEncoder.encode(currentUser, "UTF-8") %>" />
-        <button type="submit">Edit User</button>
-    </form>
 
     <form action="ListUsersServlet" method="get" style="display:inline;">
         <button type="submit">View Users</button>

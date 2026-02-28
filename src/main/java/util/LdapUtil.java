@@ -1,228 +1,229 @@
 package util;
 
+import Model.OUModel;
 import Model.User;
-
-import javax.naming.Context;
-import javax.naming.NamingEnumeration;
-import javax.naming.NamingException;
+import javax.naming.*;
 import javax.naming.directory.*;
-import java.util.ArrayList;
-import java.util.Hashtable;
-import java.util.List;
+import java.util.*;
 
 public class LdapUtil {
 
-    /* ================= CONFIG ================= */
     private static final String LDAP_URL = "ldaps://WIN-GD9BC63P04I.mydomain.local:636";
     private static final String DOMAIN   = "mydomain.local";
     private static final String BASE_DN  = "DC=mydomain,DC=local";
-
-    /* ================= AUTH ================= */
-    public static DirContext getUserContext(String username, String password)
-            throws NamingException {
-
-        String userPrincipal = username + "@" + DOMAIN;
-
+    public static DirContext getUserContext(String username, String password) throws NamingException {
         Hashtable<String, String> env = new Hashtable<>();
         env.put(Context.INITIAL_CONTEXT_FACTORY, "com.sun.jndi.ldap.LdapCtxFactory");
-        env.put(Context.PROVIDER_URL, LDAP_URL);
-        env.put(Context.SECURITY_AUTHENTICATION, "simple");
-        env.put(Context.SECURITY_PRINCIPAL, userPrincipal);
+        env.put(Context.PROVIDER_URL,LDAP_URL);
+        env.put(Context.SECURITY_AUTHENTICATION,"simple");
+        env.put(Context.SECURITY_PRINCIPAL, username + "@" + DOMAIN);
         env.put(Context.SECURITY_CREDENTIALS, password);
-        env.put(Context.SECURITY_PROTOCOL, "ssl");
-
+        env.put(Context.SECURITY_PROTOCOL,"ssl");
+        env.put("java.naming.referral","ignore");
         return new InitialDirContext(env);
     }
 
-    /* ================= GET ALL USERS ================= */
+    public static boolean authenticate(String username, String password) {
+        try {
+            getUserContext(username, password).close();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static final String[] ATTRS = {
+        "sAMAccountName", "givenName", "sn", "cn", "mail",
+        "displayName", "initials", "description",
+        "physicalDeliveryOfficeName", "telephoneNumber", "wWWHomePage",
+        "homePhone", "pager", "mobile", "TelephoneNumber", "ipPhone", "info",
+        "streetAddress", "postOfficeBox", "l", "st", "postalCode", "co",
+        "title", "department", "company", "manager"
+    };
+    public static List<OUModel> getOUList(String bindUser, String bindPassword) {
+        List<OUModel> ouList = new ArrayList<>();
+        DirContext ctx = null;
+        try {
+            ctx = getUserContext(bindUser, bindPassword);
+            SearchControls sc = new SearchControls();
+            sc.setSearchScope(SearchControls.SUBTREE_SCOPE);
+            sc.setReturningAttributes(new String[]{"name", "distinguishedName"});
+            NamingEnumeration<SearchResult> results = ctx.search(
+                BASE_DN, "(objectClass=organizationalUnit)", sc);
+            while (true) {
+                try {
+                    if (!results.hasMore()) break;
+                    Attributes attrs = results.next().getAttributes();
+                    String name = get(attrs, "name");
+                    String dn   = get(attrs, "distinguishedName");
+                    if (!name.isEmpty()) ouList.add(new OUModel(name, dn));
+                } catch (PartialResultException e) {
+                    break;
+                }
+            }
+        } catch (NamingException e) {
+            e.printStackTrace();
+        } finally {
+            close(ctx);
+        }
+        return ouList;
+    }
+
+  
+  
     public static List<User> getAllUsers(String username, String password) {
         List<User> users = new ArrayList<>();
         DirContext ctx = null;
-
         try {
             ctx = getUserContext(username, password);
-
             SearchControls sc = new SearchControls();
             sc.setSearchScope(SearchControls.SUBTREE_SCOPE);
-            sc.setReturningAttributes(new String[]{
-                "sAMAccountName", "givenName", "sn", "cn", "mail"
-            });
-
-            NamingEnumeration<SearchResult> results = ctx.search(BASE_DN, "(objectClass=user)", sc);
-
+            sc.setReturningAttributes(ATTRS);
+            NamingEnumeration<SearchResult> results = ctx.search(
+                BASE_DN, "(&(objectClass=user)(objectCategory=person))", sc);
             while (results.hasMore()) {
-                Attributes a = results.next().getAttributes();
-                users.add(mapUser(a));
+                users.add(mapUser(results.next().getAttributes()));
             }
-
         } catch (NamingException e) {
             e.printStackTrace();
         } finally {
             close(ctx);
         }
-
         return users;
     }
 
-    /* ================= GET USER BY USERNAME ================= */
-    public static User getUserByUsername(String searchUsername,
-                                         String bindUser,
-                                         String bindPassword) {
-
+    public static User getUserByUsername(String searchUsername, String bindUser, String bindPassword) {
         DirContext ctx = null;
-
         try {
             ctx = getUserContext(bindUser, bindPassword);
-
-            String filter = "(sAMAccountName=" + escapeLDAP(searchUsername) + ")";
-
             SearchControls sc = new SearchControls();
             sc.setSearchScope(SearchControls.SUBTREE_SCOPE);
-
-            NamingEnumeration<SearchResult> results = ctx.search(BASE_DN, filter, sc);
-
-            if (results.hasMore()) {
-                Attributes a = results.next().getAttributes();
-                return mapUser(a);
-            }
-
+            sc.setReturningAttributes(ATTRS);
+            NamingEnumeration<SearchResult> results = ctx.search(
+                BASE_DN, "(sAMAccountName=" + escape(searchUsername) + ")", sc);
+            if (results.hasMore()) return mapUser(results.next().getAttributes());
         } catch (NamingException e) {
             e.printStackTrace();
         } finally {
             close(ctx);
         }
-
         return null;
     }
 
-    /* ================= UPDATE USER ================= */
-    public static boolean updateUserAttributes(
-            String username,
-            String firstName,
-            String lastName,
-            String fullName,
-            String email,
-            String displayName,
-            String initials,
-            String description,
-            String office,
-            String telephone,
-            String webpage,
-            String bindUser,
-            String bindPassword) {
+   
+    public static boolean updateUser(String username,
+            String firstName, String lastName, String displayName,
+            String initials, String description, String office,
+            String telephone, String email, String webpage,
+            String homePhone, String pager, String mobile,
+            String fax, String ipPhone, String notes,
+            String street, String poBox, String city,
+            String state, String zip, String country,
+            String jobTitle, String department, String company,
+            String manager, 
+            String bindUser, String bindPassword) {
 
         DirContext ctx = null;
-
         try {
             ctx = getUserContext(bindUser, bindPassword);
-
-            String filter = "(sAMAccountName=" + escapeLDAP(username) + ")";
             SearchControls sc = new SearchControls();
             sc.setSearchScope(SearchControls.SUBTREE_SCOPE);
-
-            NamingEnumeration<SearchResult> results = ctx.search(BASE_DN, filter, sc);
-
-            if (!results.hasMore())
-                return false;
+            NamingEnumeration<SearchResult> results = ctx.search(
+                BASE_DN, "(sAMAccountName=" + escape(username) + ")", sc);
+            if (!results.hasMore()) return false;
 
             String dn = results.next().getNameInNamespace();
-
             List<ModificationItem> mods = new ArrayList<>();
 
-            addReplace(mods, "givenName", firstName);
-            addReplace(mods, "sn", lastName);
-            addReplace(mods, "cn", fullName);
-            addReplace(mods, "mail", email);
-            addReplace(mods, "displayName", displayName);
-            addReplace(mods, "initials", initials);
-            addReplace(mods, "description", description);
-            addReplace(mods, "physicalDeliveryOfficeName", office);
-            addReplace(mods, "telephoneNumber", telephone);
-            addReplace(mods, "wWWHomePage", webpage);
-
-            if (!mods.isEmpty()) {
-                ctx.modifyAttributes(dn, mods.toArray(new ModificationItem[0]));
-            }
-
-            return true;
-
+           
+            addMod(mods, "givenName",  firstName);
+            addMod(mods, "sn", lastName);
+            addMod(mods, "displayName", displayName);
+            addMod(mods, "initials", initials);
+            addMod(mods, "description", description);
+            addMod(mods, "physicalDeliveryOfficeName", office);
+            addMod(mods, "telephoneNumber", telephone);
+            addMod(mods, "mail", email);
+            addMod(mods, "wWWHomePage", webpage);
+            addMod(mods, "homePhone", homePhone);
+            addMod(mods, "pager",pager);
+            addMod(mods, "mobile", mobile);
+            addMod(mods, "TelephoneNumber",fax);
+            addMod(mods, "ipPhone", ipPhone);
+            addMod(mods, "info",  notes);
+          
+            addMod(mods, "streetAddress",street);
+            addMod(mods, "postOfficeBox",poBox);
+            addMod(mods, "l",city);
+            addMod(mods, "st",state);
+            addMod(mods, "postalCode",zip);
+            addMod(mods, "co", country);
+            addMod(mods, "title", jobTitle);
+            addMod(mods, "department",   department);
+            addMod(mods, "company", company);
+            addMod(mods,"manager",manager);
+        
         } catch (NamingException e) {
             e.printStackTrace();
         } finally {
             close(ctx);
         }
-
         return false;
     }
 
-    /* ================= MAPPING ================= */
+  
     private static User mapUser(Attributes a) throws NamingException {
         return new User(
-                getAttr(a, "sAMAccountName"),
-                getAttr(a, "givenName"),
-                getAttr(a, "sn"),
-                getAttr(a, "cn"),
-                getAttr(a, "mail"),
-                getAttr(a, "displayName"),
-                getAttr(a, "initials"),
-                getAttr(a, "description"),
-                getAttr(a, "physicalDeliveryOfficeName"),
-                getAttr(a, "telephoneNumber"),
-                getAttr(a, "wWWHomePage")
+            get(a,"sAMAccountName"),
+            get(a,"givenName"),
+            get(a,"sn"),
+            get(a,"cn"),
+            get(a,"mail"),
+            get(a,"displayName"),
+            get(a,"initials"),
+            get(a,"description"),
+            get(a,"physicalDeliveryOfficeName"),
+            get(a,"telephoneNumber"),
+            get(a,"wWWHomePage"),
+            get(a,"homePhone"),
+            get(a,"pager"),
+            get(a,"mobile"),
+            get(a,"TelephoneNumber"),
+            get(a,"ipPhone"),
+            get(a,"info"),
+            get(a,"streetAddress"),
+            get(a,"postOfficeBox"),
+            get(a,"l"),
+            get(a,"st"),
+            get(a,"postalCode"),
+            get(a,"co"),
+            get(a,"title"),
+            get(a,"department"),
+            get(a,"company"),
+            get(a,"manager")
+            
         );
     }
 
-    /* ================= HELPERS ================= */
-    private static void addReplace(List<ModificationItem> mods,
-                                   String attr,
-                                   String value) {
-
-        if (value != null) {
-            if (value.trim().isEmpty()) {
-                mods.add(new ModificationItem(
-                        DirContext.REMOVE_ATTRIBUTE,
-                        new BasicAttribute(attr)));
-            } else {
-                mods.add(new ModificationItem(
-                        DirContext.REPLACE_ATTRIBUTE,
-                        new BasicAttribute(attr, value)));
-            }
-        }
+    private static void addMod(List<ModificationItem> mods, String attr, String value) {
+        if (value == null) return;
+        if (value.trim().isEmpty())
+            mods.add(new ModificationItem(DirContext.REMOVE_ATTRIBUTE,  new BasicAttribute(attr)));
+        else
+            mods.add(new ModificationItem(DirContext.REPLACE_ATTRIBUTE, new BasicAttribute(attr, value)));
     }
 
-    private static String getAttr(Attributes attrs, String name) throws NamingException {
-        return attrs.get(name) != null ? attrs.get(name).get().toString() : "";
+    private static String get(Attributes a, String name) throws NamingException {
+        return a.get(name) != null ? a.get(name).get().toString() : "";
     }
 
     private static void close(DirContext ctx) {
-        if (ctx != null) {
-            try { ctx.close(); } catch (Exception ignored) {}
-        }
+        if (ctx != null) try { ctx.close(); } catch (Exception ignored) {}
     }
 
-    private static String escapeLDAP(String value) {
-        return value.replace("\\", "\\5c")
-                    .replace("*", "\\2a")
-                    .replace("(", "\\28")
-                    .replace(")", "\\29")
-                    .replace("\u0000", "\\00");
-    }
-
-    /* ================= AUTHENTICATE ================= */
-    public static boolean authenticate(String username, String password) {
-        if (username == null || username.trim().isEmpty() ||
-            password == null || password.trim().isEmpty()) {
-            return false;
-        }
-
-        DirContext ctx = null;
-        try {
-            ctx = getUserContext(username, password);
-            return true; // valid credentials
-        } catch (NamingException e) {
-            return false; // invalid credentials
-        } finally {
-            close(ctx);
-        }
+    private static String escape(String v) {
+        return v.replace("\\","\\5c").replace("*","\\2a")
+                .replace("(","\\28").replace(")","\\29")
+                .replace("\u0000","\\00");
     }
 }
